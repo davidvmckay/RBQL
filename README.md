@@ -105,7 +105,7 @@ Limitation: _JOIN_ statements can't contain Python/JS expressions and must have 
 
 To join more than 2 table in one query use chaining pipe `|` operator. Example:
 ```
-`SELECT a.country, a.population, b.capital JOIN capitals.csv ON a.country == b.country | SELECT a.*, b.museum JOIN museums.csv on a.capital == b.city`
+SELECT a.country, a.population, b.capital JOIN capitals.csv ON a.country == b.country | SELECT a.*, b.museum JOIN museums.csv ON a.capital == b.city
 ```
 
 ### SELECT EXCEPT statement
@@ -147,6 +147,7 @@ You can define custom functions and/or import libraries in two special files:
 * `SELECT a1, b1, b2 INNER JOIN ./countries.txt ON a2 == b1 ORDER BY a1, a3` - example of join query
 * `SELECT MAX(a1), MIN(a1) WHERE a.Name != 'John' GROUP BY a2, a3` - example of aggregate query
 * `SELECT *a1.split(':')` - Using Python3 unpack operator to split one column into many. Do not try this with other SQL engines!
+* `SELECT json.loads(a1) | SELECT a1['name']` - Use query chaining to operate on JSON data
 
 #### With JavaScript expressions
 
@@ -159,6 +160,7 @@ You can define custom functions and/or import libraries in two special files:
 * `SELECT a1, b1, b2 INNER JOIN ./countries.txt ON a2 == b1 ORDER BY a1, a3` - example of join query
 * `SELECT MAX(a1), MIN(a1) WHERE a.Name != 'John' GROUP BY a2, a3` - example of aggregate query
 * `SELECT ...a1.split(':')` - Using JS "destructuring assignment" syntax to split one column into many. Do not try this with other SQL engines!
+* `SELECT JSON.parse(a1) | SELECT a1['name']` - Use query chaining to operate on JSON data
 
 
 ## RBQL design principles and architecture

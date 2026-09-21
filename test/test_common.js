@@ -1,3 +1,13 @@
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+var debug_mode = false;
+
+function set_debug_mode(dbg_mode_val) {
+    debug_mode = dbg_mode_val;
+}
+
 function die(error_msg) {
     console.error('Error: ' + error_msg);
     process.exit(1);
@@ -6,6 +16,9 @@ function die(error_msg) {
 function fail(error_msg, exit_at_error, silent) {
     if (!error_msg)
         error_msg = 'Assertion failed';
+    if (debug_mode) {
+        console.trace();
+    }
     if (exit_at_error)
         die(error_msg);
     if (!silent)
@@ -34,7 +47,7 @@ function assert(condition, message=null, exit_at_error=true, silent=false) {
 
 function assert_equal(a, b, exit_at_error=true, silent=false) {
     if (a != b)
-        return fail(`Assertion error: assert_equal has failed: a = "${a}", b = "${b}"`, exit_at_error, silent);
+        return fail(`Assertion error: assert_equal has failed: expected = "${a}", actual = "${b}"`, exit_at_error, silent);
     return true;
 }
 
@@ -118,6 +131,65 @@ function get_default(obj, key, default_value) {
 }
 
 
+// TODO: convert to a class
+function PseudoWritable() {
+    this.data_chunks = [];
+    this.encoding = 'utf-8';
+    this.error_callback = null;
+
+    this.setDefaultEncoding = function(encoding) {
+        this.encoding = encoding;
+    };
+
+    this.write = function(data) {
+        this.data_chunks.push(data);
+    };
+
+    this.get_data = function() {
+        return Buffer.from(this.data_chunks.join(''), this.encoding);
+    };
+
+    this.get_text = function() {
+        return this.data_chunks.join('');
+    }
+
+    this.on = function(msg_type, callback) {
+        assert(msg_type === 'error');
+        this.error_callback = callback;
+    }
+
+    this.emulate_error = function(error_obj) {
+        this.error_callback(error_obj);
+    }
+}
+
+
+function rmtree(root_path) {
+    if (fs.existsSync(root_path)) {
+        fs.readdirSync(root_path).forEach(function(file_name, _index) {
+            let child_path = path.join(root_path, file_name);
+            if (fs.lstatSync(child_path).isDirectory()) {
+                rmtree(child_path);
+            } else {
+                fs.unlinkSync(child_path);
+            }
+        });
+        fs.rmdirSync(root_path);
+    }
+};
+
+
+function calc_str_md5(str) {
+    return crypto.createHash('md5').update(str, 'utf-8').digest('hex');
+}
+
+
+function calc_file_md5(file_path) {
+    let data = fs.readFileSync(file_path, 'utf-8');
+    return calc_str_md5(data);
+}
+
+
 module.exports.get_default = get_default;
 module.exports.normalize_warnings = normalize_warnings;
 module.exports.assert_objects_are_equal = assert_objects_are_equal;
@@ -125,3 +197,7 @@ module.exports.assert = assert;
 module.exports.assert_arrays_are_equal = assert_arrays_are_equal;
 module.exports.assert_equal = assert_equal;
 module.exports.round_floats = round_floats;
+module.exports.set_debug_mode = set_debug_mode;
+module.exports.PseudoWritable = PseudoWritable;
+module.exports.rmtree = rmtree;
+module.exports.calc_file_md5 = calc_file_md5;

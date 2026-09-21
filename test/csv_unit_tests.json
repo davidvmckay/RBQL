@@ -370,6 +370,7 @@
         "csv_policy": "quoted_rfc",
         "with_headers": true,
         "csv_encoding": "utf-8",
+        "skip_others": false,
         "query_python": "update a.country = a.country.upper(), a.num_students = a.num_students.replace(',', '')",
         "query_js": "update a.country = a.country.toUpperCase(), a.num_students = a.num_students.replace(/,/g, '')"
     },
@@ -423,7 +424,7 @@
     {
         "test_name": "bad field name",
         "input_table_path": "csv_files/countries.csv",
-        "expected_error": "Unable to find column \"foobar\" in input CSV header line",
+        "expected_error": "Unable to find column \"foobar\" in input header",
         "expected_error_exact": true,
         "csv_separator": ",",
         "with_headers": true,
@@ -627,6 +628,7 @@
         "test_name": "Bad header: empty strings and duplicate values in header",
         "input_table_path": "csv_files/countries_bad_header.csv",
         "expected_output_table_path": "csv_files/countries_bad_header_result1.csv",
+        "skip_others": false,
         "csv_separator": ",",
         "csv_policy": "quoted_rfc",
         "with_headers": true,

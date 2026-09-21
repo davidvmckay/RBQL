@@ -128,6 +128,21 @@ function expect_throws(f, expected_exception_substring) {
 }
 
 
+function test_get_variables_map() {
+    let query = 'Select NR';
+    let table_header = ['a'];
+    let variables_map = rbql.get_variables_map(query, 'a', table_header);
+    let expected_variables_map = {'a': {initialize: true, index: 0}};
+    test_common.assert_objects_are_equal(variables_map, expected_variables_map);
+
+    query = 'Select NR, a1';
+    table_header = ['a'];
+    variables_map = rbql.get_variables_map(query, 'a', table_header);
+    expected_variables_map = {'a': {initialize: true, index: 0}, 'a1': {initialize: true, index: 0}};
+    test_common.assert_objects_are_equal(variables_map, expected_variables_map);
+}
+
+
 function test_join_parsing() {
     let join_part = '/path/to/the/file.tsv on a1 == b3';
     test_common.assert_arrays_are_equal(['/path/to/the/file.tsv', [['a1', 'b3']]], rbql.parse_join_expression(join_part));
@@ -165,6 +180,14 @@ function test_update_translation() {
     expected_dst.push(indent + 'safe_set(up_fields, 29, 200/3 + 1);');
     expected_dst = expected_dst.join('\n');
     let test_dst = rbql.translate_update_expression(rbql_src, {'a1': vinf(true, 0), 'a2': vinf(true, 1), 'a4': vinf(true, 3), 'a8': vinf(true, 7), 'a30': vinf(true, 29)}, [], indent);
+    test_common.assert_arrays_are_equal(expected_dst.split('\n'), test_dst.split('\n'));
+
+    rbql_src = 'a1 = foo(123, altitude = 20)';
+    indent = ' '.repeat(4);
+    expected_dst = [];
+    expected_dst.push('safe_set(up_fields, 0, foo(123, altitude = 20));');
+    expected_dst = expected_dst.join('\n');
+    test_dst = rbql.translate_update_expression(rbql_src, {'a1': vinf(true, 0), 'a2': vinf(true, 1), 'a4': vinf(true, 3), 'a8': vinf(true, 7), 'a30': vinf(true, 29)}, [], indent);
     test_common.assert_arrays_are_equal(expected_dst.split('\n'), test_dst.split('\n'));
 }
 
@@ -255,7 +278,6 @@ async function test_json_tables() {
         let join_table = test_common.get_default(test_case, 'join_table', null);
         let input_column_names = test_common.get_default(test_case, 'input_column_names', null)
         let join_column_names = test_common.get_default(test_case, 'join_column_names', null)
-        let normalize_column_names = test_common.get_default(test_case, 'normalize_column_names', true)
         let user_init_code = test_common.get_default(test_case, 'js_init_code', '');
         let expected_output_header = test_common.get_default(test_case, 'expected_output_header', null);
         let expected_output_table = test_common.get_default(test_case, 'expected_output_table', null);
@@ -271,7 +293,7 @@ async function test_json_tables() {
         let output_column_names = [];
         let error_type = null;
         try {
-            await rbql.query_table(query, input_table, output_table, warnings, join_table, input_column_names, join_column_names, output_column_names, normalize_column_names, user_init_code);
+            await rbql.query_table(query, input_table, output_table, warnings, join_table, input_column_names, join_column_names, output_column_names, user_init_code);
         } catch (e) {
             if (local_debug_mode)
                 throw(e);
@@ -312,6 +334,17 @@ async function test_direct_table_queries() {
     await rbql.query_table('select a2 + " test", a1 limit 2', [[1, 'foo'], [2, 'bar'], [3, 'hello']], output_table, warnings);
     test_common.assert(warnings.length == 0);
     test_common.assert_arrays_are_equal(expected_table, output_table);
+}
+
+async function test_version() {
+    const package_json = JSON.parse(fs.readFileSync('../rbql-js/package.json', 'utf-8'));
+    test_common.assert_equal(package_json['version'], rbql.version);
+
+    let output_table = [];
+    let warnings = [];
+    await rbql.query_table('select top 1 RBQL_VERSION', [[1, 'foo'], [2, 'bar'], [3, 'hello']], output_table, warnings);
+    test_common.assert(warnings.length == 0);
+    test_common.assert_equal(package_json['version'], output_table[0][0]);
 }
 
 
@@ -356,6 +389,34 @@ function test_column_name_parsing() {
 
     select_part = 'a1, a[2], a.hello, a["world"], NR, NF, something, foo(something, \'bar\'), "test", {3, 3 + 3, *, a.*, b.*';
     expect_throws(() => {prepare_and_parse_select_expression_to_column_infos(select_part);}, 'Unable to parse column headers in SELECT expression: No matching closing bracket for opening "{"');
+
+    select_part = 'foo(bar, baz)["world"]';
+    column_infos = prepare_and_parse_select_expression_to_column_infos(select_part);
+    expected = [
+        {"table_name":null,"column_index":null,"column_name":'world',"is_star":false, alias_name: null},
+    ];
+    test_common.assert_objects_are_equal(expected, column_infos);
+
+    select_part = 'foo(bar, baz)["world"]["hello"]';
+    column_infos = prepare_and_parse_select_expression_to_column_infos(select_part);
+    expected = [
+        {"table_name":null,"column_index":null,"column_name":'hello',"is_star":false, alias_name: null},
+    ];
+    test_common.assert_objects_are_equal(expected, column_infos);
+
+    select_part = 'a.foo';
+    column_infos = prepare_and_parse_select_expression_to_column_infos(select_part);
+    expected = [
+        {"table_name":null,"column_index":null,"column_name":'foo',"is_star":false, alias_name: null},
+    ];
+    test_common.assert_objects_are_equal(expected, column_infos);
+
+    select_part = 'a.foo.bar';
+    column_infos = prepare_and_parse_select_expression_to_column_infos(select_part);
+    expected = [
+        {"table_name":null,"column_index":null,"column_name":'bar',"is_star":false, alias_name: null},
+    ];
+    test_common.assert_objects_are_equal(expected, column_infos);
 }
 
 
@@ -398,6 +459,7 @@ async function test_everything() {
     test_replace_star_count();
     test_string_literals_separation();
     test_separate_actions();
+    test_get_variables_map();
     test_join_parsing();
     test_update_translation();
     test_except_parsing();
@@ -406,6 +468,7 @@ async function test_everything() {
     test_column_name_parsing_from_file();
     test_inconsistent_record_sampling();
     await test_direct_table_queries();
+    await test_version();
     await test_json_tables();
 }
 

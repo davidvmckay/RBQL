@@ -2,7 +2,6 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
-const crypto = require('crypto');
 const stream = require('stream');
 
 const csv_utils = require('../rbql-js/csv_utils.js');
@@ -24,21 +23,6 @@ var debug_mode = false;
 const line_separators = ['\n', '\r\n', '\r'];
 
 let num_csv_tests_executed = 0;
-
-
-function rmtree(root_path) {
-    if (fs.existsSync(root_path)) {
-        fs.readdirSync(root_path).forEach(function(file_name, _index) {
-            let child_path = path.join(root_path, file_name);
-            if (fs.lstatSync(child_path).isDirectory()) {
-                rmtree(child_path);
-            } else {
-                fs.unlinkSync(child_path);
-            }
-        });
-        fs.rmdirSync(root_path);
-    }
-};
 
 
 function random_choice(values) {
@@ -63,17 +47,6 @@ function natural_random(min_val, max_val) {
     if (k > 6)
         return max_val - 8 + k;
     return random_int(min_val, max_val);
-}
-
-
-function calc_str_md5(str) {
-    return crypto.createHash('md5').update(str, 'utf-8').digest('hex');
-}
-
-
-function calc_file_md5(file_path) {
-    let data = fs.readFileSync(file_path, 'utf-8');
-    return calc_str_md5(data);
 }
 
 
@@ -263,28 +236,6 @@ function table_to_csv_string_random(table, delim, policy, comment_prefix=null) {
 }
 
 
-function PseudoWritable() {
-    this.data_chunks = [];
-    this.encoding = 'utf-8';
-
-    this.setDefaultEncoding = function(encoding) {
-        this.encoding = encoding;
-    };
-
-    this.write = function(data) {
-        this.data_chunks.push(data);
-    };
-
-    this.get_data = function() {
-        return Buffer.from(this.data_chunks.join(''), this.encoding);
-    };
-
-    this.on = function(msg_type, callback) {
-        assert(msg_type === 'error');
-    }
-}
-
-
 function string_to_randomly_encoded_stream(src_str) {
     let encoding = random_choice(['utf-8', 'binary']);
     let input_stream = new stream.Readable();
@@ -297,10 +248,10 @@ function string_to_randomly_encoded_stream(src_str) {
 async function write_and_parse_back(table, encoding, delim, policy) {
     if (encoding === null)
         encoding = 'utf-8'; // Writing js string in utf-8 then reading back should be a lossless operation? Or not?
-    let writer_stream = new PseudoWritable();
+    let writer_stream = new test_common.PseudoWritable();
     let line_separator = random_choice(line_separators);
     let writer = new rbql_csv.CSVWriter(writer_stream, false, encoding, delim, policy, line_separator);
-    writer._write_all(table);
+    await writer._write_all(table);
     await writer.finish();
     assert(writer.get_warnings().length === 0);
     let data_buffer = writer_stream.get_data();
@@ -517,7 +468,7 @@ async function process_test_case(tmp_tests_dir, test_case) {
         let output_file_name = path.basename(expected_output_table_path);
         expected_output_table_path = path.join(script_dir, expected_output_table_path);
         actual_output_table_path = path.join(tmp_tests_dir, output_file_name);
-        expected_md5 = calc_file_md5(expected_output_table_path);
+        expected_md5 = test_common.calc_file_md5(expected_output_table_path);
     } else {
         actual_output_table_path = path.join(tmp_tests_dir, 'expected_empty_file');
     }
@@ -546,7 +497,7 @@ async function process_test_case(tmp_tests_dir, test_case) {
     }
     warnings = test_common.normalize_warnings(warnings).sort();
     test_common.assert_arrays_are_equal(expected_warnings, warnings);
-    let actual_md5 = calc_file_md5(actual_output_table_path);
+    let actual_md5 = test_common.calc_file_md5(actual_output_table_path);
     assert(expected_md5 == actual_md5, `md5 mismatch in test "${test_name}". Expected table: ${expected_output_table_path}, Actual table: ${actual_output_table_path}`);
 }
 
@@ -569,7 +520,7 @@ async function test_json_scenarios() {
         }
     }
     console.log(`Number of json csv tests executed: ${num_csv_tests_executed}`)
-    rmtree(tmp_tests_dir);
+    test_common.rmtree(tmp_tests_dir);
 }
 
 
@@ -713,7 +664,7 @@ async function test_monocolumn_separated_parsing() {
 
 
 function test_record_queue() {
-    let record_queue = new rbql_csv.RecordQueue();
+    let record_queue = new csv_utils.RecordQueue();
     record_queue.enqueue(10);
     record_queue.enqueue(20);
     test_common.assert_equal(10, record_queue.dequeue());
@@ -752,7 +703,7 @@ function test_attribute_variables_parsing() {
     let header_columns_names = ['epsilon', 'foo bar', '_name', "Surname", "income", "...", "2", "200"];
     let expected_variables_map = {'a.epsilon': vinf(true, 0), 'a._name': vinf(true, 2), "a.Surname": vinf(true, 3)};
     let actual_variables_map = {};
-    rbql.parse_attribute_variables(query, 'a', header_columns_names, 'CSV header line', actual_variables_map);
+    rbql.parse_attribute_variables(query, 'a', header_columns_names, actual_variables_map);
     test_common.assert_objects_are_equal(expected_variables_map, actual_variables_map);
 }
 

@@ -40,8 +40,24 @@ def prepare_and_parse_select_expression_to_column_infos(select_part):
     select_expression, string_literals = rbql_engine.separate_string_literals(select_part)
     select_expression_for_ast = rbql_engine.translate_select_expression(select_expression)[1]
     combined_select_expression_for_ast = rbql_engine.combine_string_literals(select_expression_for_ast, string_literals)
-    column_infos = rbql_engine.ast_parse_select_expression_to_column_infos(combined_select_expression_for_ast)
+    column_infos = rbql_engine.ast_parse_select_expression_to_column_infos_best_effort(combined_select_expression_for_ast)
     return column_infos
+
+
+
+class TestGetVariablesMap(unittest.TestCase):
+    def test_monocolumn_simple(self):
+        query_text = 'select NR'
+        table_header = ['a']
+        variables_map = rbql_engine.get_variables_map(query_text, 'a', table_header)
+        expected_variables_map = {'a' : rbql_engine.VariableInfo(True, 0)}
+        self.assertEqual(variables_map, expected_variables_map)
+
+        query_text = 'select NR, a1'
+        table_header = ['a']
+        variables_map = rbql_engine.get_variables_map(query_text, 'a', table_header)
+        expected_variables_map = {'a' : rbql_engine.VariableInfo(True, 0), 'a1' : rbql_engine.VariableInfo(True, 0)}
+        self.assertEqual(variables_map, expected_variables_map)
 
 
 class TestRBQLQueryParsing(unittest.TestCase):
@@ -108,7 +124,7 @@ class TestRBQLQueryParsing(unittest.TestCase):
                    ]
         self.assertEqual(expected, column_infos) 
 
-        output_header = rbql_engine.select_output_header(['a_foo_1', 'a_foo_2'], ['b_foo_1'], expected);
+        output_header = rbql_engine.select_output_header_best_effort(['a_foo_1', 'a_foo_2'], ['b_foo_1'], expected);
         expected_header = ['a_foo_1', 'a_foo_2', 'hello', 'world', 'NR', 'NF', 'something', 'col8', 'col9', 'col10', 'col11', 'my_hello', 'a_foo_1', 'a_foo_2', 'b_foo_1', 'MY_NR', 'a_foo_1', 'a_foo_2', 'b_foo_1', 'col20'];
         self.assertEqual(expected_header, output_header);
 
@@ -124,6 +140,16 @@ class TestRBQLQueryParsing(unittest.TestCase):
         with self.assertRaises(SyntaxError) as cm:
             # Explanation: "aas" should not parse.
             prepare_and_parse_select_expression_to_column_infos(select_part)
+
+        select_part = 'a.foo.bar'
+        column_infos = prepare_and_parse_select_expression_to_column_infos(select_part)
+        expected = [rbql_engine.QueryColumnInfo(None, None, 'bar', False, None)]
+        self.assertEqual(expected, column_infos) 
+
+        select_part = 'a.*'
+        column_infos = prepare_and_parse_select_expression_to_column_infos(select_part)
+        expected = [rbql_engine.QueryColumnInfo('a', None, None, True, None)]
+        self.assertEqual(expected, column_infos) 
 
     def test_string_literals_separation(self):
         #TODO generate some random examples: Generate some strings randomly and then parse them
@@ -231,6 +257,12 @@ class TestRBQLQueryParsing(unittest.TestCase):
         expected_dst = '\n'.join(expected_dst)
         self.assertEqual(expected_dst, test_dst)
 
+        rbql_src = 'a1 = foo(123, altitude = 20)'
+        test_dst = rbql_engine.translate_update_expression(rbql_src, {'a1': vinf(1, 0), 'a2': vinf(1, 1), 'a4': vinf(1, 3), 'a8': vinf(1, 7), 'a30': vinf(1, 29)}, ['"100 200"'])
+        expected_dst = list()
+        expected_dst.append('safe_set(up_fields, 0, foo(123, altitude = 20))')
+        expected_dst = '\n'.join(expected_dst)
+        self.assertEqual(expected_dst, test_dst)
 
         rbql_src = '  a.name =  a2  + b3, a2=a4  if b3 == a2 else a8, a8=   ___RBQL_STRING_LITERAL0___, a[___RBQL_STRING_LITERAL1___]  =200/3 + 1  '
         test_dst = rbql_engine.translate_update_expression(rbql_src, {'a.name': vinf(1, 0), 'a2': vinf(1, 1), 'a4': vinf(1, 3), 'a8': vinf(1, 7), 'a["foo bar"]': vinf(1, 29), 'a["not used = should not fail"]': vinf(0, 32)}, ['"100 200"', '"foo bar"'])
@@ -344,7 +376,7 @@ class TestFromQueries(unittest.TestCase):
 
         input_iterator = None
         output_writer = rbql_engine.TableWriter(output_table)
-        tables_registry = rbql_engine.ListTableRegistry([rbql_engine.ListTableInfo('input_table', input_table, None), rbql_engine.ListTableInfo('unused_table', [], None)], normalize_column_names=True)
+        tables_registry = rbql_engine.ListTableRegistry([rbql_engine.ListTableInfo('input_table', input_table, None), rbql_engine.ListTableInfo('unused_table', [], None)])
 
         rbql.query(query_text, input_iterator, output_writer, warnings, tables_registry, user_init_code='')
         self.assertEqual(warnings, [])
@@ -360,7 +392,7 @@ class TestFromQueries(unittest.TestCase):
     
         input_iterator = None
         output_writer = rbql_engine.TableWriter(output_table)
-        tables_registry = rbql_engine.ListTableRegistry([rbql_engine.ListTableInfo('input_table', input_table, None)], normalize_column_names=True)
+        tables_registry = rbql_engine.ListTableRegistry([rbql_engine.ListTableInfo('input_table', input_table, None)])
         with self.assertRaises(Exception) as cm:
             rbql.query(query_text, input_iterator, output_writer, warnings, tables_registry, user_init_code='')
         e = cm.exception
@@ -375,7 +407,7 @@ class TestFromQueries(unittest.TestCase):
 
         input_iterator = None
         output_writer = rbql_engine.TableWriter(output_table)
-        tables_registry = rbql_engine.ListTableRegistry([rbql_engine.ListTableInfo('input_table', input_table, None)], normalize_column_names=True)
+        tables_registry = rbql_engine.ListTableRegistry([rbql_engine.ListTableInfo('input_table', input_table, None)])
         with self.assertRaises(Exception) as cm:
             rbql.query(query_text, input_iterator, output_writer, warnings, tables_registry, user_init_code='')
         e = cm.exception
@@ -391,7 +423,7 @@ class TestFromQueries(unittest.TestCase):
 
         input_iterator = None
         output_writer = rbql_engine.TableWriter(output_table)
-        tables_registry = rbql_engine.ListTableRegistry([rbql_engine.ListTableInfo('my_input_table', input_table, None), rbql_engine.ListTableInfo('my_join_table', join_table, None), rbql_engine.ListTableInfo('unused_table', [], None)], normalize_column_names=True)
+        tables_registry = rbql_engine.ListTableRegistry([rbql_engine.ListTableInfo('my_input_table', input_table, None), rbql_engine.ListTableInfo('my_join_table', join_table, None), rbql_engine.ListTableInfo('unused_table', [], None)])
 
         rbql.query(query_text, input_iterator, output_writer, warnings, tables_registry, user_init_code='')
         self.assertEqual(warnings, [])
@@ -408,6 +440,16 @@ class TestTableRun(unittest.TestCase):
         rbql.query_table(query, input_table, output_table, warnings)
         self.assertEqual(warnings, [])
         self.assertEqual(expected_output_table, output_table)
+
+
+    def test_get_version(self):
+        input_table = [('Roosevelt', 1858), ('Napoleon', 1769), ('Confucius', -551)]
+        query = 'select top 1 RBQL_VERSION'
+        output_table = []
+        warnings = []
+        rbql.query_table(query, input_table, output_table, warnings)
+        self.assertEqual(warnings, [])
+        self.assertEqual(rbql.__version__, output_table[0][0])
 
 
     def test_table_run_simple_join(self):
@@ -445,7 +487,6 @@ class TestJsonTables(unittest.TestCase):
         join_table = test_case.get('join_table', None)
         input_column_names = test_case.get('input_column_names', None)
         join_column_names = test_case.get('join_column_names', None)
-        normalize_column_names = test_case.get('normalize_column_names', True)
         user_init_code = test_case.get('python_init_code', '')
         expected_output_header = test_case.get('expected_output_header', list())
         expected_output_table = test_case.get('expected_output_table', None)
@@ -464,7 +505,7 @@ class TestJsonTables(unittest.TestCase):
         output_column_names = []
         error_type, error_msg = None, None
         try:
-            rbql.query_table(query, input_table, output_table, warnings, join_table, input_column_names, join_column_names, output_column_names, normalize_column_names, user_init_code)
+            rbql.query_table(query, input_table, output_table, warnings, join_table, input_column_names, join_column_names, output_column_names, user_init_code)
         except Exception as e:
             if debug_mode:
                 raise

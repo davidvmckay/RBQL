@@ -228,9 +228,6 @@ class CSVWriter(rbql_engine.RBQLOutputWriter):
             self.stream.write(self.line_separator)
             return True
         except BrokenPipeError as exc:
-            if BrokenPipeError == IOError: # FIXME perhaps we don't need this? Maybe it was needed for Python 2 only?
-                if exc.errno != EPIPE:
-                    raise
             self.broken_pipe = True
             return False
 
@@ -294,9 +291,6 @@ class CSVWriter(rbql_engine.RBQLOutputWriter):
                 # Basically this fails if output is small and this is the first flush after the pipe was broken e.g. second flush if piped to head -n 1
                 # Here head -n 1 finished after the first flush, and the final explict flush here just killing it
             except BrokenPipeError as exc:
-                if BrokenPipeError == IOError: # FIXME perhaps we don't need this? Maybe it was needed for Python 2 only?
-                    if exc.errno != EPIPE:
-                        raise
                 # In order to avoid BrokenPipeError from being printed as a warning to stderr, we need to perform this magic below. See:
                 # Explanation 1: https://stackoverflow.com/a/35761190/2898283
                 # Explanation 2: https://bugs.python.org/issue11380
@@ -331,8 +325,8 @@ class CSVRecordIterator(rbql_engine.RBQLInputIterator):
         self.buffer = ''
         self.detected_line_separator = '\n'
         self.exhausted = False
-        self.NR = 0 # Record number
-        self.NL = 0 # Line number (NL != NR when the CSV file has comments or multiline fields)
+        self.record_number = 0
+        self.line_number = 0 # Line number != record number when the CSV file has comments or multiline fields.
         self.chunk_size = chunk_size
         self.fields_info = dict()
 
@@ -360,17 +354,9 @@ class CSVRecordIterator(rbql_engine.RBQLInputIterator):
             self.first_record_should_be_emitted = True
 
 
-    def get_variables_map(self, query_text):
-        variable_map = dict()
-        rbql_engine.parse_basic_variables(query_text, self.variable_prefix, variable_map)
-        rbql_engine.parse_array_variables(query_text, self.variable_prefix, variable_map)
-        if self.has_header and self.first_record is not None:
-            rbql_engine.parse_attribute_variables(query_text, self.variable_prefix, self.first_record, 'CSV header line', variable_map)
-            rbql_engine.parse_dictionary_variables(query_text, self.variable_prefix, self.first_record, variable_map)
-        return variable_map
-
     def get_header(self):
         return self.first_record if self.has_header else None
+
 
     def _get_row_from_buffer(self):
         str_before, separator, str_after = csv_utils.extract_line_from_data(self.buffer)
@@ -414,8 +400,8 @@ class CSVRecordIterator(rbql_engine.RBQLInputIterator):
                         return None
                     row = self.buffer
                     self.buffer = ''
-            self.NL += 1
-            if self.NL == 1:
+            self.line_number += 1
+            if self.line_number == 1:
                 clean_line = remove_utf8_bom(row, self.encoding)
                 if clean_line != row:
                     row = clean_line
@@ -464,18 +450,18 @@ class CSVRecordIterator(rbql_engine.RBQLInputIterator):
                 continue
             found_record = True
 
-        self.NR += 1
+        self.record_number += 1
         record, warning = self.polymorphic_split(line)
         if self.strip_whitespaces:
             record = [v.strip() for v in record]
         if warning:
             if self.first_defective_line is None:
-                self.first_defective_line = self.NL
+                self.first_defective_line = self.line_number
                 if self.policy == 'quoted_rfc':
-                    raise rbql_engine.RbqlIOHandlingError('Inconsistent double quote escaping in {} table at record {}, line {}'.format(self.table_name, self.NR, self.NL))
+                    raise rbql_engine.RbqlIOHandlingError('Inconsistent double quote escaping in {} table at record {}, line {}'.format(self.table_name, self.record_number, self.line_number))
         num_fields = len(record)
         if num_fields not in self.fields_info:
-            self.fields_info[num_fields] = self.NR
+            self.fields_info[num_fields] = self.record_number
         return record
 
 

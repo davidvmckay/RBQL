@@ -42,6 +42,217 @@ def calc_file_md5(fname):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
 
+class TestDeduplicateHeadersKeys(unittest.TestCase):
+    def test_deduplication_simple(self):
+        input_keys = ['a', 'b']
+        actual_output_keys, actual_deduplicated_keys = rbql_json.deduplicate_header_keys(input_keys)
+        expected_output_keys = ['a', 'b']
+        expected_deduplicated_keys = []
+        self.assertEqual(expected_output_keys, actual_output_keys)
+        self.assertEqual(expected_deduplicated_keys, actual_deduplicated_keys)
+
+        input_keys = ['a', 'a']
+        actual_output_keys, actual_deduplicated_keys = rbql_json.deduplicate_header_keys(input_keys)
+        expected_output_keys = ['a', 'a_2']
+        expected_deduplicated_keys = ['a']
+        self.assertEqual(expected_output_keys, actual_output_keys)
+        self.assertEqual(expected_deduplicated_keys, actual_deduplicated_keys)
+
+        input_keys = ['a', 'a', 'a_2']
+        actual_output_keys, actual_deduplicated_keys = rbql_json.deduplicate_header_keys(input_keys)
+        expected_output_keys = ['a', 'a_2', 'a_2_2']
+        expected_deduplicated_keys = ['a', 'a_2']
+        self.assertEqual(expected_output_keys, actual_output_keys)
+        self.assertEqual(expected_deduplicated_keys, actual_deduplicated_keys)
+
+        input_keys = []
+        actual_output_keys, actual_deduplicated_keys = rbql_json.deduplicate_header_keys(input_keys)
+        expected_output_keys = []
+        expected_deduplicated_keys = []
+        self.assertEqual(expected_output_keys, actual_output_keys)
+        self.assertEqual(expected_deduplicated_keys, actual_deduplicated_keys)
+
+class TestJsonObjectByHeader(unittest.TestCase):
+    def test_simple(self):
+        header = ['bar']
+        fields = ['foo']
+        actual_object = rbql_json.get_json_object_to_write(header, fields)
+        expected_object = 'foo'
+        self.assertEqual(expected_object, actual_object)
+
+        header = ['bar']
+        fields = ['foo', 'bar']
+        with self.assertRaises(Exception) as cm:
+            actual_object = rbql_json.get_json_object_to_write(header, fields)
+        e = cm.exception
+        self.assertEqual(str(e), 'Inconsistent number of columns in output header and the current record: 1 != 2')
+
+        header = ['h1', 'h2']
+        fields = ['foo', 'bar']
+        actual_object = rbql_json.get_json_object_to_write(header, fields)
+        expected_object = {'h1': 'foo', 'h2': 'bar'}
+        self.assertEqual(expected_object, actual_object)
+
+        header = []
+        fields = ['foo', 'bar']
+        actual_object = rbql_json.get_json_object_to_write(header, fields)
+        expected_object = {'col1': 'foo', 'col2': 'bar'}
+        self.assertEqual(expected_object, actual_object)
+        
+
+
+class TestGetDeduplicationWarnings(unittest.TestCase):
+    def test_lines_writer(self):
+        writer_stream = io.StringIO()
+        close_stream_on_finish = False
+        encoding = None
+        writer = rbql_json.JsonLinesWriter(writer_stream, close_stream_on_finish, encoding)
+        writer.set_header(['a', 'a'])
+        actual_warnings = writer.get_warnings()
+        expected_warnings = ['Deduplicated output json keys to avoid data loss: "a"']
+        self.assertEqual(expected_warnings, actual_warnings)
+
+    def test_array_writer(self):
+        writer_stream = io.StringIO()
+        close_stream_on_finish = False
+        encoding = None
+        writer = rbql_json.JsonArrayObjectWriter(writer_stream, close_stream_on_finish, encoding)
+        writer.set_header(['a', 'a'])
+        actual_warnings = writer.get_warnings()
+        expected_warnings = ['Deduplicated output json keys to avoid data loss: "a"']
+        self.assertEqual(expected_warnings, actual_warnings)
+
+
+class TestJsonArrayObjectRecordIterator(unittest.TestCase):
+    def test_one_record(self):
+        input_stream = io.StringIO('["foo"]')
+        encoding = None
+        input_iterator = rbql_json.JsonArrayObjectRecordIterator(input_stream, encoding)
+        self.assertEqual(input_iterator.get_record(), ["foo"])
+        self.assertEqual(input_iterator.get_record(), None)
+
+    def test_empty_table(self):
+        input_stream = io.StringIO('[]')
+        encoding = None
+        input_iterator = rbql_json.JsonArrayObjectRecordIterator(input_stream, encoding)
+        self.assertEqual(input_iterator.get_record(), None)
+
+    def test_bad_non_json_input(self):
+        input_stream = io.StringIO('')
+        encoding = None
+        with self.assertRaises(Exception) as cm:
+            input_iterator = rbql_json.JsonArrayObjectRecordIterator(input_stream, encoding)
+        e = cm.exception
+        self.assertTrue(str(e).find('Unable to parse input as JSON') != -1)
+
+    def test_non_array_object(self):
+        input_stream = io.StringIO('{"foo": 2}')
+        encoding = None
+        with self.assertRaises(Exception) as cm:
+            input_iterator = rbql_json.JsonArrayObjectRecordIterator(input_stream, encoding)
+        e = cm.exception
+        self.assertTrue(str(e).find('Input JSON root node must be array in array iteration mode') != -1)
+
+
+class TestJsonLinesWriter(unittest.TestCase):
+    def test_empty_write(self):
+        writer_stream = io.StringIO()
+        close_stream_on_finish = False
+        encoding = None
+        writer = rbql_json.JsonLinesWriter(writer_stream, close_stream_on_finish, encoding)
+        writer.finish()
+        writer_stream.seek(0)
+        actual_data = writer_stream.getvalue()
+        expected_data = ''
+        self.assertEqual(expected_data, actual_data)
+
+    def test_two_records_single_element(self):
+        writer_stream = io.StringIO()
+        close_stream_on_finish = False
+        encoding = None
+        writer = rbql_json.JsonLinesWriter(writer_stream, close_stream_on_finish, encoding)
+        writer.write([{'foo': 1}])
+        writer.write([{'foo': 2}])
+        writer.finish()
+        writer_stream.seek(0)
+        actual_data = writer_stream.getvalue()
+        expected_data = '{"foo": 1}\n{"foo": 2}\n'
+        self.assertEqual(expected_data, actual_data)
+
+
+class TestArrayObjectReadWrite(unittest.TestCase):
+    def test_empty_write(self):
+        writer_stream = io.StringIO()
+        close_stream_on_finish = False
+        encoding = None
+        writer = rbql_json.JsonArrayObjectWriter(writer_stream, close_stream_on_finish, encoding)
+        writer.finish()
+        writer_stream.seek(0)
+        actual_data = writer_stream.getvalue()
+        expected_data = '[\n]\n'
+        self.assertEqual(expected_data, actual_data)
+
+    def test_write_json_utf_8_stream_encode(self):
+        writer_stream = io.BytesIO()
+        close_stream_on_finish = False
+        encoding = 'utf-8'
+        writer = rbql_json.JsonArrayObjectWriter(writer_stream, close_stream_on_finish, encoding)
+        writer.finish()
+        writer_stream.seek(0)
+        actual_data = writer_stream.getvalue()
+        expected_data = b'[\n]\n'
+        self.assertEqual(expected_data, actual_data)
+
+    def test_two_records_single_element(self):
+        writer_stream = io.StringIO()
+        close_stream_on_finish = False
+        encoding = None
+        writer = rbql_json.JsonArrayObjectWriter(writer_stream, close_stream_on_finish, encoding)
+        writer.write([{'foo': 1}])
+        writer.write([{'foo': 2}])
+        writer.finish()
+        writer_stream.seek(0)
+        actual_data = writer_stream.getvalue()
+        expected_data = '[\n{"foo": 1},\n{"foo": 2}\n]\n'
+        self.assertEqual(expected_data, actual_data)
+
+    def test_pretty_indent(self):
+        writer_stream = io.StringIO()
+        close_stream_on_finish = False
+        encoding = None
+        writer = rbql_json.JsonArrayObjectWriter(writer_stream, close_stream_on_finish, encoding, pretty_indent=2)
+        writer.write([{'foo': 1}])
+        writer.finish()
+        writer_stream.seek(0)
+        actual_data = writer_stream.getvalue()
+        expected_data = '[\n{\n  "foo": 1\n}\n]\n'
+        self.assertEqual(expected_data, actual_data)
+
+    def test_two_records_two_elements(self):
+        writer_stream = io.StringIO()
+        close_stream_on_finish = False
+        encoding = None
+        writer = rbql_json.JsonArrayObjectWriter(writer_stream, close_stream_on_finish, encoding)
+        writer.write(['foo', 1])
+        writer.write(['bar', 2])
+        writer.finish()
+        writer_stream.seek(0)
+        actual_data = writer_stream.getvalue()
+        expected_data = '[\n{"col1": "foo", "col2": 1},\n{"col1": "bar", "col2": 2}\n]\n'
+        self.assertEqual(expected_data, actual_data)
+
+    def test_set_header(self):
+        writer_stream = io.StringIO()
+        close_stream_on_finish = False
+        encoding = None
+        writer = rbql_json.JsonArrayObjectWriter(writer_stream, close_stream_on_finish, encoding)
+        writer.set_header(['name', 'count'])
+        writer.write(['foo', 1])
+        writer.finish()
+        writer_stream.seek(0)
+        actual_data = writer_stream.getvalue()
+        expected_data = '[\n{"name": "foo", "count": 1}\n]\n'
+        self.assertEqual(expected_data, actual_data)
 
 
 class TestRBQLWithJSON(unittest.TestCase):
@@ -51,6 +262,8 @@ class TestRBQLWithJSON(unittest.TestCase):
         if query is None:
             return
         debug_mode = test_case.get('debug_mode', False)
+        input_json_lines = test_case.get('input_json_lines', True)
+        output_json_lines = test_case.get('output_json_lines', True)
         input_table_path = test_case['input_table_path']
         query = query.replace('###UT_TESTS_DIR###', script_dir)
         input_table_path = os.path.join(script_dir, input_table_path)
@@ -74,7 +287,7 @@ class TestRBQLWithJSON(unittest.TestCase):
         warnings = []
         error_type, error_msg = None, None
         try:
-            rbql_json.query_json(query, input_table_path, actual_output_table_path, warnings)
+            rbql_json.query_json(query, input_table_path, actual_output_table_path, warnings, input_json_lines=input_json_lines, output_json_lines=output_json_lines)
         except Exception as e:
             if debug_mode:
                 raise
